@@ -1,0 +1,9 @@
+x_nucleo_ihm04a1_stm32f4xx.c:113:6:L6206_Board_Delay	0	static
+x_nucleo_ihm04a1_stm32f4xx.c:123:6:L6206_Board_DisableBridge	40	static
+x_nucleo_ihm04a1_stm32f4xx.c:160:6:L6206_Board_EnableBridge	48	static
+x_nucleo_ihm04a1_stm32f4xx.c:202:10:L6206_Board_GetFlagPinState	8	static
+x_nucleo_ihm04a1_stm32f4xx.c:224:6:L6206_Board_GpioInit	56	static
+x_nucleo_ihm04a1_stm32f4xx.c:271:6:L6206_Board_PwmDeInit	0	static
+x_nucleo_ihm04a1_stm32f4xx.c:312:6:L6206_Board_PwmInit	56	static
+x_nucleo_ihm04a1_stm32f4xx.c:373:6:L6206_Board_PwmSetFreq	16	static
+x_nucleo_ihm04a1_stm32f4xx.c:431:6:L6206_Board_PwmStop	0	static
