@@ -27,6 +27,8 @@
 extern "C" {
 #endif
 
+#define HEAD_CHAR_BIT_POS	0
+
 /* Includes ------------------------------------------------------------------*/
 #include "stm32f4xx_hal.h"
 #include "x_nucleo_ihmxx.h"
@@ -80,6 +82,12 @@ void Error_Handler(uint16_t error);
 #define SWO_Pin GPIO_PIN_3
 #define SWO_GPIO_Port GPIOB
 /* USER CODE BEGIN Private defines */
+#define GO 1
+#define STOP 0
+#define MOVE_FORWARD (1 << 1)
+#define DRIVE_MOTOR1 (1 << 2)
+#define MOTOR0 0
+#define MOTOR1 1
 
 /* USER CODE END Private defines */
 

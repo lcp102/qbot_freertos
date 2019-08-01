@@ -53,12 +53,12 @@ QueueHandle_t vMaxQueue = NULL;
 
 deviceParams_t initDeviceParameters =
 {
-		 L6206_CONF_PARAM_PARALLE_BRIDGES,
-		 {L6206_CONF_PARAM_FREQ_PWM1A, L6206_CONF_PARAM_FREQ_PWM2A, L6206_CONF_PARAM_FREQ_PWM1B, L6206_CONF_PARAM_FREQ_PWM2B},
-		 {100,100,100,100},
-		 {FORWARD,FORWARD,BACKWARD,FORWARD},
-		 {INACTIVE,INACTIVE,INACTIVE,INACTIVE},
-		 {FALSE,FALSE}
+		PARALLELING_NONE___1_BIDIR_MOTOR_BRIDGE_A__1_BIDIR_MOTOR_BRIDGE_B,
+		{L6206_CONF_PARAM_FREQ_PWM1A, L6206_CONF_PARAM_FREQ_PWM2A, L6206_CONF_PARAM_FREQ_PWM1B, L6206_CONF_PARAM_FREQ_PWM2B},
+		{100,100,100,100},
+		{FORWARD,BACKWARD,FORWARD,BACKWARD},
+		{INACTIVE,INACTIVE,INACTIVE,INACTIVE},
+		{TRUE,TRUE}
 };
 
 /* USER CODE BEGIN PV */
@@ -98,6 +98,10 @@ void led_on_off(void *pvParameters)
  * 3. receive updates of y distance
  * 4. receive updates of z angle
  * 5. receive command to move
+ * 5. move == 'mndg' --> move state:
+ * 			g = 0 for stop, 1 for go
+ * 			d = 0 for forward, 1 for reverse
+ * 			n = 0 for motor 0, 1 for motor 1
  */
 void motor_control(void *pvParameters)
 {
@@ -106,7 +110,9 @@ void motor_control(void *pvParameters)
 	uint16_t max_speed = 0;
 	BaseType_t queueStatus;
 	int cmd_vel = 0;
-	bool move = false;
+	uint8_t move = STOP;
+	uint8_t motor_number = MOTOR0;
+	motorDir_t direction = BACKWARD;
 	const TickType_t xTicksToWait = 0;
 	/*
 	 * loop continuously
@@ -128,17 +134,28 @@ void motor_control(void *pvParameters)
 		 */
 		queueStatus = xQueueReceive(moveQueue, &move, xTicksToWait);
 		if (queueStatus == pdPASS) {
-			//if (1 == move) {
-			if (true == move) {
+			if ((move & GO) == 1) {
 				max_speed = (uint16_t)cmd_vel;
 			}
 			else {
 				max_speed = 0;
 			}
+			if ((move & MOVE_FORWARD) > 0) {
+				direction = FORWARD;
+			}
+			else {
+				direction = BACKWARD;
+			}
+			if ((move & DRIVE_MOTOR1) > 0) {
+				motor_number = MOTOR1;
+			}
+			else {
+				motor_number = MOTOR0;
+			}
 		}
-		BSP_MotorControl_SetMaxSpeed(0, max_speed);
+		BSP_MotorControl_SetMaxSpeed(motor_number, max_speed);
 		vTaskDelay(command_delay);
-		BSP_MotorControl_Run(0, FORWARD);
+		BSP_MotorControl_Run(motor_number, direction);
 		vTaskDelay(command_delay);
 		vTaskDelay(loop_delay);
 	}
@@ -151,7 +168,10 @@ void motor_control(void *pvParameters)
  * 2. == 'x' --> x distance, i.e. linear.x
  * 3. == 'y' --> y distance, i.e. linear.y
  * 4. == 'a' --> angle, i.e. angular.z
- * 5. == 'm' --> move state, 0 for stop, 1 for go
+ * 5. == 'mndg' --> move state:
+ * 			g = 0 for stop, 1 for go
+ * 			d = 0 for forward, 1 for reverse
+ * 			n = 0 for motor 0, 1 for motor 1
  */
 void rec_bytes(void *pvParameters)
 {
@@ -163,7 +183,7 @@ void rec_bytes(void *pvParameters)
 	HAL_StatusTypeDef ret_value = HAL_OK;
 	BaseType_t queueStatus;
 	int cmd_vel = 0;
-	bool move = false;
+	uint8_t move = 0;
 	const TickType_t xTicksToWait = 0;
 	for (;;) {
 		ret_value = HAL_UART_Receive(&huart2,
@@ -177,13 +197,13 @@ void rec_bytes(void *pvParameters)
 			/*
 			 * check for max velocity change
 			 */
-			if ((uint8_t)'v' == rec_buff[0]) {
+			if ((uint8_t)'v' == rec_buff[HEAD_CHAR_BIT_POS]) {
 				/* convert string to decimal number */
-				rec_buff[0] = (uint8_t)'0';
+				rec_buff[HEAD_CHAR_BIT_POS] = (uint8_t)'0';
 				int base = 10;
 				cmd_vel = (int)strtol((const char *)rec_buff, NULL, base);
 				queueStatus = xQueueSendToBack(vMaxQueue, &cmd_vel, xTicksToWait);
-				rec_buff[0] = (uint8_t)'V';
+				rec_buff[HEAD_CHAR_BIT_POS] = (uint8_t)'V';
 				if (queueStatus != pdPASS) {
 					HAL_UART_Transmit(&huart2,
 							(uint8_t *)"vel send fail\n\r",
@@ -194,13 +214,42 @@ void rec_bytes(void *pvParameters)
 			/*
 			 * check for move state
 			 */
-			else if ((uint8_t)'m' == rec_buff[0]) {
+			else if ((uint8_t)'m' == rec_buff[HEAD_CHAR_BIT_POS]) {
 				/* convert string to decimal number */
-				rec_buff[0] = (uint8_t)'0';
-				int base = 10;
-				move = (bool)strtol((const char *)rec_buff, NULL, base);
+				rec_buff[HEAD_CHAR_BIT_POS] = (uint8_t)'0';
+				/*
+				 * reset move before setting new command value
+				 */
+				move = 0;
+				/*
+				 * stop or go state
+				 */
+				if ((uint8_t)'1' == rec_buff[HEAD_CHAR_BIT_POS + 3]) {
+					move = move | GO;
+				}
+				else {
+					move = move | STOP;
+				}
+				/*
+				 * motor rotation direction
+				 */
+				if ((uint8_t)'1' == rec_buff[HEAD_CHAR_BIT_POS + 2]) {
+					move = move | MOVE_FORWARD;
+				}
+				else {
+					move = move | BACKWARD;
+				}
+				/*
+				 * select which motor to drive
+				 */
+				if ((uint8_t)'1' == rec_buff[HEAD_CHAR_BIT_POS + 1]) {
+					move = move | DRIVE_MOTOR1;
+				}
+				else {
+					move = move | MOTOR0;
+				}
 				queueStatus = xQueueSendToBack(moveQueue, &move, xTicksToWait);
-				rec_buff[0] = (uint8_t)'M';
+				rec_buff[HEAD_CHAR_BIT_POS] = (uint8_t)'M';
 				if (queueStatus != pdPASS) {
 					HAL_UART_Transmit(&huart2,
 							(uint8_t *)"move send fail\n\r",
@@ -209,9 +258,9 @@ void rec_bytes(void *pvParameters)
 				}
 			}
 			else {
-				rec_buff[0] = (uint8_t)'n';
-				rec_buff[1] = (uint8_t)'o';
-				rec_buff[2] = (uint8_t)'p';
+				rec_buff[HEAD_CHAR_BIT_POS] = (uint8_t)'n';
+				rec_buff[HEAD_CHAR_BIT_POS + 1] = (uint8_t)'o';
+				rec_buff[HEAD_CHAR_BIT_POS + 2] = (uint8_t)'p';
 			}
 			/* copy receive buffer contents to transmit buffer */
 			memcpy(trans_buff, rec_buff, buff_size);
@@ -268,7 +317,7 @@ int main(void)
 
   //----- Init of the Motor control library
   /* Set the L6208 library to use 1 device */
-  BSP_MotorControl_SetNbDevices(BSP_MOTOR_CONTROL_BOARD_ID_L6206, 1);
+  BSP_MotorControl_SetNbDevices(BSP_MOTOR_CONTROL_BOARD_ID_L6206, 2);
   /* When BSP_MotorControl_Init is called with NULL pointer,                  */
   /* the L6206 parameters are set with the predefined values from file        */
   /* l6206_target_config.h, otherwise the parameters are set using the        */
@@ -278,7 +327,7 @@ int main(void)
   /* Select the configuration with paralleling of bridge input IN1A with IN2A,
   and with paralleling of bridge input IN1B with IN2B with the use of one
   bidirectional motor */
-  BSP_MotorControl_SetDualFullBridgeConfig(PARALLELING_IN1A_IN2A__IN1B_IN2B__1_BIDIR_MOTOR);
+  BSP_MotorControl_SetDualFullBridgeConfig(PARALLELING_NONE___1_BIDIR_MOTOR_BRIDGE_A__1_BIDIR_MOTOR_BRIDGE_B);
 
   /* Attach the function MyFlagInterruptHandler (defined below) to the flag interrupt */
   BSP_MotorControl_AttachFlagInterrupt(MyFlagInterruptHandler);
@@ -314,7 +363,8 @@ int main(void)
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
   vMaxQueue = xQueueCreate(1, sizeof(int));
-  moveQueue = xQueueCreate(1, sizeof(bool));
+  //moveQueue = xQueueCreate(1, sizeof(bool));
+  moveQueue = xQueueCreate(1, sizeof(uint8_t));
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
