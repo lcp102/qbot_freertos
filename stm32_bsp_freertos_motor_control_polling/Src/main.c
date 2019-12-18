@@ -43,13 +43,26 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+TIM_HandleTypeDef htim1;
+TIM_HandleTypeDef htim4;
+
 UART_HandleTypeDef huart2;
+
 osThreadId defaultTaskHandle;
+/* USER CODE BEGIN PV */
 QueueHandle_t moveQueue = NULL;
-QueueHandle_t xPosQueue = NULL;
+QueueHandle_t enc1Queue = NULL;
+QueueHandle_t getEnc1Queue = NULL;
 QueueHandle_t yPosQueue = NULL;
 QueueHandle_t zAngQueue = NULL;
 QueueHandle_t vMaxQueue = NULL;
+QueueHandle_t encoderQueue = NULL;
+
+/* data structure used by encoder queue */
+typedef struct {
+	uint8_t encoder;
+	uint8_t buffer[BUFF_SIZE];
+} EncoderData_t;
 
 deviceParams_t initDeviceParameters =
 {
@@ -61,7 +74,6 @@ deviceParams_t initDeviceParameters =
 		{TRUE,TRUE}
 };
 
-/* USER CODE BEGIN PV */
 
 /* USER CODE END PV */
 
@@ -69,11 +81,13 @@ deviceParams_t initDeviceParameters =
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
+static void MX_TIM1_Init(void);
+//static void MX_TIM4_Init(void);
 void StartDefaultTask(void const * argument);
-static void MyFlagInterruptHandler(void);
-void ButtonHandler(void);
 
 /* USER CODE BEGIN PFP */
+static void MyFlagInterruptHandler(void);
+void ButtonHandler(void);
 
 /* USER CODE END PFP */
 
@@ -91,6 +105,183 @@ void led_on_off(void *pvParameters)
 	}
 }
 
+void encoder_one(void *pvParameters)
+{
+	TickType_t xDelay = 100;
+	uint32_t timer1_count;
+	BaseType_t queueStatus;
+	const TickType_t xTicksToWait = 0;
+	char encoder_cnt_buff[BUFF_SIZE];
+	uint8_t encoder_1_buff[BUFF_SIZE];
+	bool get_encoder_data = false;
+	int str_len;
+
+	encoder_1_buff[0] = (uint8_t)'i';
+	encoder_1_buff[1] = (uint8_t)'i';
+	encoder_1_buff[2] = (uint8_t)'i';
+	encoder_1_buff[3] = (uint8_t)'i';
+
+	MX_TIM1_Init();
+	vTaskDelay(xDelay);
+	HAL_TIM_Encoder_Start(&htim1, TIM_CHANNEL_ALL);
+	vTaskDelay(xDelay);
+
+	/*
+	 * loop continuously
+	 * read encoder counts and send updates
+	 */
+	for (;;) {
+		/* read timer 1 count value */
+		timer1_count = TIM1->CNT;
+		//timer1_count = 6;
+		queueStatus = xQueueReceive(getEnc1Queue, &get_encoder_data, xTicksToWait);
+		if (queueStatus == pdTRUE) {
+			if (get_encoder_data == true) {
+				str_len = sprintf(encoder_cnt_buff, "%lu", timer1_count);
+				if (str_len < 0) {
+					/*
+					 * 4 padded 0's
+					 */
+					encoder_1_buff[0] = (uint8_t)'x';
+					encoder_1_buff[1] = (uint8_t)'y';
+					encoder_1_buff[2] = (uint8_t)'z';
+					encoder_1_buff[3] = (uint8_t)'w';
+				}
+				/*
+				 * pad the buffer
+				 */
+				if (str_len == 1) {
+					/*
+					 * 3 padded 0's
+					 */
+					encoder_1_buff[0] = (uint8_t)'1';
+					encoder_1_buff[1] = (uint8_t)'1';
+					encoder_1_buff[2] = (uint8_t)'1';
+					encoder_1_buff[3] = (uint8_t)encoder_cnt_buff[0];
+				}
+				if (str_len == 2) {
+					/*
+					 * 2 padded 0's
+					 */
+					encoder_1_buff[0] = (uint8_t)'2';
+					encoder_1_buff[1] = (uint8_t)'2';
+					encoder_1_buff[2] = (uint8_t)encoder_cnt_buff[0];
+					encoder_1_buff[3] = (uint8_t)encoder_cnt_buff[1];
+				}
+				if (str_len == 3) {
+					/*
+					 * 1 padded 0's
+					 */
+					encoder_1_buff[0] = (uint8_t)'3';
+					encoder_1_buff[1] = (uint8_t)encoder_cnt_buff[0];
+					encoder_1_buff[2] = (uint8_t)encoder_cnt_buff[1];
+					encoder_1_buff[3] = (uint8_t)encoder_cnt_buff[2];
+				}
+				if (str_len == 4) {
+					/*
+					 * 0 padded 0's
+					 */
+					encoder_1_buff[0] = (uint8_t)encoder_cnt_buff[0];
+					encoder_1_buff[1] = (uint8_t)encoder_cnt_buff[1];
+					encoder_1_buff[2] = (uint8_t)encoder_cnt_buff[2];
+					encoder_1_buff[3] = (uint8_t)encoder_cnt_buff[3];
+				}
+				queueStatus = xQueueSendToBack(enc1Queue,
+										   &encoder_1_buff,
+										   xTicksToWait);
+			}
+		}
+		vTaskDelay(xDelay);
+	}
+}
+
+void get_encoder_values(void *pvParameters)
+{
+	TickType_t xDelay = 100;
+	uint32_t timer1_count;
+	uint32_t timer4_count;
+	BaseType_t queueStatus;
+	const TickType_t xTicksToWait = 0;
+	EncoderData_t encoder_data;
+	char encoder_cnt_buff[BUFF_SIZE];
+	int str_len;
+	/*
+	 * loop continuously
+	 * read encoder counts and send updates
+	 */
+	for (;;) {
+		/* timer 1 count */
+		timer1_count = TIM1->CNT;
+		//timer1_count = 6;
+		/* timer 4 count */
+		//timer4_count = TIM4->CNT;
+		timer4_count = 4444;
+
+		queueStatus = xQueueReceive(encoderQueue, &encoder_data, xTicksToWait);
+		if (queueStatus == pdPASS) {
+			if (encoder_data.encoder == 1) {
+				str_len = sprintf(encoder_cnt_buff, "%lu", timer1_count);
+			}
+			else if (encoder_data.encoder == 2) {
+				str_len = sprintf(encoder_cnt_buff, "%lu", timer4_count);
+			}
+			else {
+				/*
+				 * 4 padded 0's
+				 */
+				encoder_data.buffer[0] = (uint8_t)'0';
+				encoder_data.buffer[1] = (uint8_t)'0';
+				encoder_data.buffer[2] = (uint8_t)'0';
+				encoder_data.buffer[3] = (uint8_t)'0';
+				str_len = 0;
+			}
+			/*
+			 * pad the buffer
+			 */
+			if (str_len == 1) {
+				/*
+				 * 3 padded 0's
+				 */
+				encoder_data.buffer[0] = (uint8_t)'0';
+				encoder_data.buffer[1] = (uint8_t)'0';
+				encoder_data.buffer[2] = (uint8_t)'0';
+				encoder_data.buffer[3] = (uint8_t)encoder_cnt_buff[0];
+			}
+			if (str_len == 2) {
+				/*
+				 * 2 padded 0's
+				 */
+				encoder_data.buffer[0] = (uint8_t)'0';
+				encoder_data.buffer[1] = (uint8_t)'0';
+				encoder_data.buffer[2] = (uint8_t)encoder_cnt_buff[0];
+				encoder_data.buffer[3] = (uint8_t)encoder_cnt_buff[1];
+			}
+			if (str_len == 3) {
+				/*
+				 * 1 padded 0's
+				 */
+				encoder_data.buffer[0] = (uint8_t)'0';
+				encoder_data.buffer[1] = (uint8_t)encoder_cnt_buff[0];
+				encoder_data.buffer[2] = (uint8_t)encoder_cnt_buff[1];
+				encoder_data.buffer[3] = (uint8_t)encoder_cnt_buff[2];
+			}
+			if (str_len == 4) {
+				/*
+				 * 0 padded 0's
+				 */
+				encoder_data.buffer[0] = (uint8_t)encoder_cnt_buff[0];
+				encoder_data.buffer[1] = (uint8_t)encoder_cnt_buff[1];
+				encoder_data.buffer[2] = (uint8_t)encoder_cnt_buff[2];
+				encoder_data.buffer[3] = (uint8_t)encoder_cnt_buff[3];
+			}
+			queueStatus = xQueueSendToBack(encoderQueue,
+										   &encoder_data,
+										   xTicksToWait);
+		}
+		vTaskDelay(xDelay);
+	}
+}
+
 /*
  * controls the motors
  * 1. receive updates of max velocity
@@ -98,7 +289,7 @@ void led_on_off(void *pvParameters)
  * 3. receive updates of y distance
  * 4. receive updates of z angle
  * 5. receive command to move
- * 5. move == 'mndg' --> move state:
+ * 6. move == 'mndg' --> move state:
  * 			g = 0 for stop, 1 for go
  * 			d = 0 for forward, 1 for reverse
  * 			n = 0 for motor 0, 1 for motor 1
@@ -108,15 +299,15 @@ void motor_control(void *pvParameters)
 	TickType_t loop_delay = 100;
 	TickType_t command_delay = 75;
 	uint16_t max_speed = 0;
-	BaseType_t queueStatus;
 	int cmd_vel = 0;
 	uint8_t move = STOP;
 	uint8_t motor_number = MOTOR0;
 	motorDir_t direction = BACKWARD;
+	BaseType_t queueStatus;
 	const TickType_t xTicksToWait = 0;
 	/*
 	 * loop continuously
-	 * update x, y, and, and max velocity values as they appear in their queues
+	 * update x, y, and max velocity values as they appear in their queues
 	 * move when a true value is received in it's queue
 	 */
 	for (;;) {
@@ -172,6 +363,9 @@ void motor_control(void *pvParameters)
  * 			g = 0 for stop, 1 for go
  * 			d = 0 for forward, 1 for reverse
  * 			n = 0 for motor 0, 1 for motor 1
+ * 6. == 'pxxe' --> position, i.e. encoder counts (for now)
+ * 			x = don't care
+ * 			e = 1 for encoder 1, 2 for encoder 2
  */
 void rec_bytes(void *pvParameters)
 {
@@ -185,6 +379,10 @@ void rec_bytes(void *pvParameters)
 	int cmd_vel = 0;
 	uint8_t move = 0;
 	const TickType_t xTicksToWait = 0;
+	//EncoderData_t encoder_data;
+	bool get_encoder_data = false;
+	uint8_t encoder_buff[BUFF_SIZE];
+
 	for (;;) {
 		ret_value = HAL_UART_Receive(&huart2,
 				rec_buff,
@@ -257,6 +455,36 @@ void rec_bytes(void *pvParameters)
 							transmit_delay);
 				}
 			}
+			else if ((uint8_t)'p' == rec_buff[HEAD_CHAR_BIT_POS]) {
+				/*
+				 * get encoder axis
+				 */
+				if ((uint8_t)'1' == rec_buff[HEAD_CHAR_BIT_POS + 3]) {
+					get_encoder_data = true;
+				}
+				else if ((uint8_t)'2' == rec_buff[HEAD_CHAR_BIT_POS + 3]){
+					//encoder_data.encoder = 2;
+				}
+				else {
+					//encoder_data.encoder = 0;
+				}
+				queueStatus = xQueueSendToBack(getEnc1Queue,
+											   &get_encoder_data,
+											   xTicksToWait);
+				vTaskDelay(transmit_delay);
+				queueStatus = xQueueReceive(enc1Queue,
+											&encoder_buff,
+											xTicksToWait);
+				if (queueStatus == pdPASS) {
+					//
+					// copy bytes to rec_buff
+					//
+					rec_buff[HEAD_CHAR_BIT_POS] = encoder_buff[0];
+					rec_buff[HEAD_CHAR_BIT_POS + 1] = encoder_buff[1];
+					rec_buff[HEAD_CHAR_BIT_POS + 2] = encoder_buff[2];
+					rec_buff[HEAD_CHAR_BIT_POS + 3] = encoder_buff[3];
+				}
+			}
 			else {
 				rec_buff[HEAD_CHAR_BIT_POS] = (uint8_t)'n';
 				rec_buff[HEAD_CHAR_BIT_POS + 1] = (uint8_t)'o';
@@ -317,7 +545,7 @@ int main(void)
 
   //----- Init of the Motor control library
   /* Set the L6208 library to use 1 device */
-  BSP_MotorControl_SetNbDevices(BSP_MOTOR_CONTROL_BOARD_ID_L6206, 2);
+  BSP_MotorControl_SetNbDevices(BSP_MOTOR_CONTROL_BOARD_ID_L6206, 1);
   /* When BSP_MotorControl_Init is called with NULL pointer,                  */
   /* the L6206 parameters are set with the predefined values from file        */
   /* l6206_target_config.h, otherwise the parameters are set using the        */
@@ -346,10 +574,20 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART2_UART_Init();
+  MX_TIM1_Init();
+  //MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
+
+  /*
+   * start the timers
+   */
+  HAL_TIM_Encoder_Start(&htim1, TIM_CHANNEL_ALL);
+  //HAL_TIM_Encoder_Start(&htim4, TIM_CHANNEL_ALL);
 
   /* USER CODE END 2 */
 
+  /* USER CODE BEGIN RTOS_MUTEX */
+  /* add mutexes, ... */
   /* USER CODE END RTOS_MUTEX */
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
@@ -362,9 +600,13 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
+
   vMaxQueue = xQueueCreate(1, sizeof(int));
-  //moveQueue = xQueueCreate(1, sizeof(bool));
   moveQueue = xQueueCreate(1, sizeof(uint8_t));
+  //encoderQueue = xQueueCreate(1, sizeof(EncoderData_t));
+  enc1Queue = xQueueCreate(1, BUFF_SIZE * sizeof(uint8_t));
+  getEnc1Queue = xQueueCreate(1, sizeof(bool));
+
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
@@ -378,6 +620,19 @@ int main(void)
    * if the Queue was created successfully, create the tasks
    */
   if (moveQueue != NULL) {
+	  xTaskCreate(encoder_one,
+			  	  (const char * const)"encoder_one",
+				  configMINIMAL_STACK_SIZE,
+				  0,
+				  2,
+				  0);
+
+	  //xTaskCreate(get_encoder_values,
+			  	  //(const char * const)"get_encoder_values",
+				  //configMINIMAL_STACK_SIZE,
+				  //0,
+				  //2,
+				  //0);
 	  xTaskCreate(led_on_off,
 			  	  (const char * const)"led_control",
 				  configMINIMAL_STACK_SIZE,
@@ -459,6 +714,105 @@ void SystemClock_Config(void)
 }
 
 /**
+  * @brief TIM1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM1_Init(void)
+{
+
+  /* USER CODE BEGIN TIM1_Init 0 */
+
+  /* USER CODE END TIM1_Init 0 */
+
+  TIM_Encoder_InitTypeDef sConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM1_Init 1 */
+
+  /* USER CODE END TIM1_Init 1 */
+  htim1.Instance = TIM1;
+  htim1.Init.Prescaler = 0;
+  htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim1.Init.Period = 65535;
+  htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim1.Init.RepetitionCounter = 0;
+  htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  sConfig.EncoderMode = TIM_ENCODERMODE_TI12;
+  sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC1Filter = 10;
+  sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC2Filter = 10;
+  if (HAL_TIM_Encoder_Init(&htim1, &sConfig) != HAL_OK)
+  {
+    Error_Handler(0);
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler(0);
+  }
+  /* USER CODE BEGIN TIM1_Init 2 */
+
+  /* USER CODE END TIM1_Init 2 */
+
+}
+
+/**
+  * @brief TIM4 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM4_Init(void)
+{
+
+  /* USER CODE BEGIN TIM4_Init 0 */
+
+  /* USER CODE END TIM4_Init 0 */
+
+  TIM_Encoder_InitTypeDef sConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM4_Init 1 */
+
+  /* USER CODE END TIM4_Init 1 */
+  htim4.Instance = TIM4;
+  htim4.Init.Prescaler = 0;
+  htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim4.Init.Period = 65535;
+  htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  sConfig.EncoderMode = TIM_ENCODERMODE_TI12;
+  sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC1Filter = 10;
+  sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC2Filter = 10;
+  if (HAL_TIM_Encoder_Init(&htim4, &sConfig) != HAL_OK)
+  {
+    Error_Handler(0);
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim4, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler(0);
+  }
+  /* USER CODE BEGIN TIM4_Init 2 */
+
+  /* USER CODE END TIM4_Init 2 */
+
+}
+
+/**
   * @brief USART2 Initialization Function
   * @param None
   * @retval None
@@ -524,7 +878,7 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pins : PA0 PA1 */
   GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_1;
   GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   GPIO_InitStruct.Alternate = GPIO_AF1_TIM2;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
@@ -545,7 +899,7 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pins : PB4 PB5 */
   GPIO_InitStruct.Pin = GPIO_PIN_4|GPIO_PIN_5;
   GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   GPIO_InitStruct.Alternate = GPIO_AF2_TIM3;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
@@ -560,6 +914,43 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+/**
+  * @brief  This function is the User handler for the flag interrupt
+  * @param  None
+  * @retval None
+  */
+void MyFlagInterruptHandler(void)
+{
+  /* Code to be customised */
+  /************************/
+  /* Get the state of bridge A */
+  uint16_t bridgeState  = BSP_MotorControl_CmdGetStatus(0);
+
+  if (bridgeState == 0)
+  {
+    if (BSP_MotorControl_GetDeviceState(0) != INACTIVE)
+    {
+      /* Bridge A was disabling due to overcurrent or over temperature */
+      /* When  motor was running */
+        Error_Handler(0);
+    }
+  }
+ }
+
+/**
+  * @brief  This function is executed when the Nucleo User button is pressed
+  * @param  error number of the error
+  * @retval None
+  */
+void ButtonHandler(void)
+{
+
+  /* Let 300 ms before clearing the IT for key debouncing */
+  HAL_Delay(300);
+  __HAL_GPIO_EXTI_CLEAR_IT(KEY_BUTTON_PIN);
+  HAL_NVIC_ClearPendingIRQ(KEY_BUTTON_EXTI_IRQn);
+}
+
 
 
 /* USER CODE END 4 */
@@ -585,7 +976,7 @@ void StartDefaultTask(void const * argument)
 
 /**
   * @brief  Period elapsed callback in non blocking mode
-  * @note   This function is called  when TIM4 interrupt took place, inside
+  * @note   This function is called  when TIM10 interrupt took place, inside
   * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
   * a global variable "uwTick" used as application time base.
   * @param  htim : TIM handle
@@ -596,7 +987,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
   /* USER CODE BEGIN Callback 0 */
 
   /* USER CODE END Callback 0 */
-  if (htim->Instance == TIM4) {
+  if (htim->Instance == TIM10) {
     HAL_IncTick();
   }
   /* USER CODE BEGIN Callback 1 */
@@ -608,58 +999,12 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
   * @brief  This function is executed in case of error occurrence.
   * @retval None
   */
-//void Error_Handler(void)
-//{
+void Error_Handler(uint16_t error)
+{
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
 
   /* USER CODE END Error_Handler_Debug */
-//}
-
-void Error_Handler(uint16_t error)
-{
-
-  /* Infinite loop */
-  while(1)
-  {
-  }
-}
-
-/**
-  * @brief  This function is the User handler for the flag interrupt
-  * @param  None
-  * @retval None
-  */
-void MyFlagInterruptHandler(void)
-{
-  /* Code to be customised */
-  /************************/
-  /* Get the state of bridge A */
-  uint16_t bridgeState  = BSP_MotorControl_CmdGetStatus(0);
-
-  if (bridgeState == 0)
-  {
-    if (BSP_MotorControl_GetDeviceState(0) != INACTIVE)
-    {
-      /* Bridge A was disabling due to overcurrent or over temperature */
-      /* When  motor was running */
-        Error_Handler(0XBAD0);
-    }
-  }
- }
-
-/**
-  * @brief  This function is executed when the Nucleo User button is pressed
-  * @param  error number of the error
-  * @retval None
-  */
-void ButtonHandler(void)
-{
-
-  /* Let 300 ms before clearing the IT for key debouncing */
-  HAL_Delay(300);
-  __HAL_GPIO_EXTI_CLEAR_IT(KEY_BUTTON_PIN);
-  HAL_NVIC_ClearPendingIRQ(KEY_BUTTON_EXTI_IRQn);
 }
 
 #ifdef  USE_FULL_ASSERT

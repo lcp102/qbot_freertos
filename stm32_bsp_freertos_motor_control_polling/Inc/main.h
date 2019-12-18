@@ -27,19 +27,18 @@
 extern "C" {
 #endif
 
-#define HEAD_CHAR_BIT_POS	0
-
 /* Includes ------------------------------------------------------------------*/
 #include "stm32f4xx_hal.h"
+
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
 #include "x_nucleo_ihmxx.h"
 #include "l6206.h"
 #include "x_nucleo_ihm04a1_stm32f4xx.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 #include <stdbool.h>
-
-/* Private includes ----------------------------------------------------------*/
-/* USER CODE BEGIN Includes */
 
 /* USER CODE END Includes */
 
@@ -59,9 +58,9 @@ extern "C" {
 /* USER CODE END EM */
 
 /* Exported functions prototypes ---------------------------------------------*/
-void Error_Handler(uint16_t error);
 
 /* USER CODE BEGIN EFP */
+void Error_Handler(uint16_t error);
 
 /* USER CODE END EFP */
 
@@ -82,12 +81,14 @@ void Error_Handler(uint16_t error);
 #define SWO_Pin GPIO_PIN_3
 #define SWO_GPIO_Port GPIOB
 /* USER CODE BEGIN Private defines */
+#define HEAD_CHAR_BIT_POS	0
 #define GO 1
 #define STOP 0
 #define MOVE_FORWARD (1 << 1)
 #define DRIVE_MOTOR1 (1 << 2)
 #define MOTOR0 0
 #define MOTOR1 1
+#define BUFF_SIZE 5
 
 /* USER CODE END Private defines */
 
